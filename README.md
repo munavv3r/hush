@@ -26,7 +26,7 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-   hush: ^0.0.1
+   hush: ^0.0.2
 ```
 
 ## Note on File Permissions:
