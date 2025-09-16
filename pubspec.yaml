@@ -1,6 +1,6 @@
 name: hush
 description: A Flutter plugin that prevents audio from being captured during screen recording on Android devices by using a secure audio path.
-version: 0.0.1
+version: 0.0.2
 homepage: https://github.com/munavv3r/hush
 repository: https://github.com/munavv3r/hush
 

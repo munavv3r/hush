@@ -2,6 +2,7 @@ package com.hush.hush
 
 import android.content.Context
 import android.media.AudioAttributes as MediaAudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
@@ -55,28 +56,17 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
   override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     context = flutterPluginBinding.applicationContext
     flutterAssets = flutterPluginBinding.flutterAssets
-
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, CHANNEL)
     channel.setMethodCallHandler(this)
-
     stateEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, STATE_CHANNEL)
     stateEventChannel.setStreamHandler(object : EventChannel.StreamHandler {
-      override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-        stateEventSink = events
-      }
-      override fun onCancel(arguments: Any?) {
-        stateEventSink = null
-      }
+      override fun onListen(arguments: Any?, events: EventChannel.EventSink?) { stateEventSink = events }
+      override fun onCancel(arguments: Any?) { stateEventSink = null }
     })
-
     positionEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, POSITION_CHANNEL)
     positionEventChannel.setStreamHandler(object : EventChannel.StreamHandler {
-      override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-        positionEventSink = events
-      }
-      override fun onCancel(arguments: Any?) {
-        positionEventSink = null
-      }
+      override fun onListen(arguments: Any?, events: EventChannel.EventSink?) { positionEventSink = events }
+      override fun onCancel(arguments: Any?) { positionEventSink = null }
     })
   }
 
@@ -107,9 +97,9 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
         "pause" -> pause(result)
         "stop" -> stop(result)
         "seek" -> {
-          val position = call.argument<Int>("position")
+          val position = call.argument<Long>("position")
           if (position != null) {
-            seek(position.toLong(), result)
+            seek(position, result)
           } else {
             result.error("INVALID_ARGUMENTS", "Position is required", null)
           }
@@ -130,6 +120,7 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
           result.success(null)
         }
         "isSecureModeActive" -> result.success(isSecureModeActive)
+        "getCurrentDevice" -> getCurrentDevice(result)
         else -> result.notImplemented()
       }
     } catch (e: Exception) {
@@ -153,26 +144,83 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
     audioManager?.let { am ->
       originalAudioMode = am.mode
       am.mode = AudioManager.MODE_IN_COMMUNICATION
-      am.isSpeakerphoneOn = true
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val devices = am.availableCommunicationDevices
+        val preferredDevice = devices.find { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
+          ?: devices.find { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }
+          ?: devices.find { it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES }
+          ?: devices.find { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+          ?: devices.find { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+
+        preferredDevice?.let { am.setCommunicationDevice(it) }
+      } else {
+        @Suppress("DEPRECATION")
+        if (!am.isWiredHeadsetOn && !am.isBluetoothA2dpOn && !am.isBluetoothScoOn) {
+          am.isSpeakerphoneOn = true
+        } else {
+          am.isSpeakerphoneOn = false
+        }
+      }
       isSecureModeActive = true
-      Log.d(TAG, "Secure mode activated")
     }
   }
 
   private fun deactivateSecureMode() {
     if (!isSecureModeActive) return
     audioManager?.let { am ->
-      am.isSpeakerphoneOn = false
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        am.clearCommunicationDevice()
+      } else {
+        @Suppress("DEPRECATION")
+        am.isSpeakerphoneOn = false
+      }
       am.mode = originalAudioMode
       isSecureModeActive = false
-      Log.d(TAG, "Secure mode deactivated")
     }
+  }
+
+  private fun getCurrentDevice(result: Result) {
+    audioManager?.let { am ->
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val device = am.communicationDevice
+        if (device != null) {
+          result.success(mapOf("name" to device.productName, "type" to device.type))
+        } else {
+          result.success(null)
+        }
+      } else {
+        val deviceName: String
+        val deviceType: Int
+        when {
+          @Suppress("DEPRECATION")
+          am.isBluetoothA2dpOn || am.isBluetoothScoOn -> {
+            deviceName = "Bluetooth Device"
+            deviceType = AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+          }
+          @Suppress("DEPRECATION")
+          am.isWiredHeadsetOn -> {
+            deviceName = "Wired Headset"
+            deviceType = AudioDeviceInfo.TYPE_WIRED_HEADSET
+          }
+          @Suppress("DEPRECATION")
+          am.isSpeakerphoneOn -> {
+            deviceName = "Speakerphone"
+            deviceType = AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+          }
+          else -> {
+            deviceName = "Earpiece"
+            deviceType = AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+          }
+        }
+        result.success(mapOf("name" to deviceName, "type" to deviceType))
+      }
+    } ?: result.error("NOT_INITIALIZED", "AudioManager is not available.", null)
   }
 
   private fun load(sourceMap: Map<String, Any>, result: Result) {
     context?.let { ctx ->
       val type = sourceMap["type"] as? String ?: return result.error("INVALID_SOURCE", "Source type is required", null)
-
       val mediaItem = when (type) {
         "file" -> {
           val path = sourceMap["path"] as? String ?: return result.error("INVALID_SOURCE", "File path is required", null)
@@ -195,31 +243,24 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
         }
         else -> return result.error("UNSUPPORTED_SOURCE", "Source type '$type' is not supported", null)
       }
-
       setupPlayer(ctx)
       player?.setMediaItem(mediaItem)
       player?.prepare()
-
       sendStateUpdate("loading")
       result.success(null)
-
     } ?: result.error("LOAD_ERROR", "Context is null", null)
   }
 
   private fun setupPlayer(context: Context) {
     if (player != null) return
-
     requestAudioFocus()
     activateSecureMode()
-
     player = ExoPlayer.Builder(context).build().apply {
       val secureAudioAttributes = AudioAttributes.Builder()
         .setUsage(C.USAGE_VOICE_COMMUNICATION)
         .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
         .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_NONE)
         .build()
-
-      // THE FIX IS HERE: set handleAudioFocus to false
       setAudioAttributes(secureAudioAttributes, false)
       setHandleAudioBecomingNoisy(true)
       volume = 1.0f
@@ -234,13 +275,11 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
           .setUsage(MediaAudioAttributes.USAGE_VOICE_COMMUNICATION)
           .setContentType(MediaAudioAttributes.CONTENT_TYPE_SPEECH)
           .build()
-
         audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
           .setAudioAttributes(voiceAttributes)
           .setAcceptsDelayedFocusGain(true)
           .setOnAudioFocusChangeListener(audioFocusChangeListener)
           .build()
-
         am.requestAudioFocus(audioFocusRequest!!)
       } else {
         @Suppress("DEPRECATION")
@@ -278,14 +317,11 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
         sendStateUpdate("playing")
       } else {
         stopPositionUpdates()
-        if (player?.playbackState == Player.STATE_ENDED) {
-          sendStateUpdate("completed")
-        } else {
+        if (player?.playbackState != Player.STATE_ENDED) {
           sendStateUpdate("paused")
         }
       }
     }
-
     override fun onPlaybackStateChanged(playbackState: Int) {
       when (playbackState) {
         Player.STATE_IDLE -> sendStateUpdate("idle")
@@ -294,7 +330,6 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
         Player.STATE_ENDED -> sendStateUpdate("completed")
       }
     }
-
     override fun onPlayerError(error: PlaybackException) {
       Log.e(TAG, "Player error: ${error.message}", error)
       sendStateUpdate("error")
@@ -302,41 +337,32 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
   }
 
   private fun play(result: Result) {
-    player?.play() ?: return result.error("PLAYER_ERROR", "Player not initialized", null)
+    player?.play()
     result.success(null)
   }
-
   private fun pause(result: Result) {
     player?.pause()
     result.success(null)
   }
-
   private fun stop(result: Result) {
     player?.stop()
     stopPositionUpdates()
     sendStateUpdate("idle")
     result.success(null)
   }
-
   private fun seek(position: Long, result: Result) {
-    player?.seekTo(position) ?: return result.error("PLAYER_ERROR", "Player not initialized", null)
+    player?.seekTo(position)
     result.success(null)
   }
-
   private fun setVolume(volume: Float, result: Result) {
     player?.volume = volume
     result.success(null)
   }
-
-  private fun getPosition(result: Result) {
-    result.success((player?.currentPosition ?: 0).toInt())
-  }
-
+  private fun getPosition(result: Result) { result.success((player?.currentPosition ?: 0).toInt()) }
   private fun getDuration(result: Result) {
     val duration = player?.duration ?: 0
     result.success(if (duration == C.TIME_UNSET) 0 else duration.toInt())
   }
-
   private fun getState(result: Result) {
     val state = when {
       player == null -> "idle"
@@ -347,7 +373,6 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
     }
     result.success(state)
   }
-
   private fun dispose() {
     stopPositionUpdates()
     player?.release()
@@ -355,7 +380,6 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
     releaseAudioFocus()
     deactivateSecureMode()
   }
-
   private fun startPositionUpdates() {
     stopPositionUpdates()
     positionUpdateRunnable = object : Runnable {
@@ -366,13 +390,9 @@ class HushPlugin : FlutterPlugin, MethodCallHandler {
     }
     positionUpdateRunnable?.let { handler.post(it) }
   }
-
   private fun stopPositionUpdates() {
     positionUpdateRunnable?.let { handler.removeCallbacks(it) }
     positionUpdateRunnable = null
   }
-
-  private fun sendStateUpdate(state: String) {
-    stateEventSink?.success(state)
-  }
+  private fun sendStateUpdate(state: String) { stateEventSink?.success(state) }
 }

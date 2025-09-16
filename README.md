@@ -4,22 +4,21 @@ A Flutter plugin that prevents audio from being captured during screen recording
 
 ## Why This Plugin?
 
-Its nearly impossible to detect if the user is recording their screen on android, even if you use FLAG_SECURE, it only protects the screen, the audio can be recorded.
-even though some devices prevents the audio from being recorded, thats not the case for majority of devices.
+It's nearly impossible to detect if the user is recording their screen on Android. Even if you use `FLAG_SECURE`, it only protects the screen; the audio can still be recorded. While some devices prevent audio recording by default, that's not the case for the majority of devices.
 
 This plugin leverages Android's native audio security model by routing audio through the voice communication stream. The system treats this stream as a private phone call, effectively preventing any app—including system-level screen recorders—from capturing the audio output.
 
-Basically it tricks android into thinking the audio is coming from a call
+Basically, it tricks Android into thinking the audio is coming from a call.
 
 ## Features
 
-- **Complete Audio Protection** - Prevents ALL screen recording apps from capturing audio
-- **Voice Communication Mode** - Uses Android's secure voice call audio path
-- **System-Level Protection** - Works against built-in screen recorders
-- **Easy Integration** - Simple API for developers
-- **Real-time Monitoring** - State and position streaming
-- **Flexible Audio Sources** - Files, assets, URLs, and byte arrays
-- **Performance Optimized** - Minimal battery and CPU impact
+-   **Complete Audio Protection** - Prevents ALL screen recording apps from capturing audio.
+-   **Intelligent Audio Routing** - Automatically plays on headphones if connected, otherwise defaults to the speaker.
+-   **Voice Communication Mode** - Uses Android's secure voice call audio path.
+-   **System-Level Protection** - Works against built-in screen recorders.
+-   **Real-time Monitoring** - State and position streaming.
+-   **Flexible Audio Sources** - Supports files, assets, URLs, and byte arrays.
+-   **Performance Optimized** - Minimal battery and CPU impact.
 
 ## Installation
 
@@ -32,29 +31,61 @@ dependencies:
 
 ## Note on File Permissions:
 
-When using HushSource.file() on Android 12 (API 32) or lower to access files outside 
-of your app's private directory, you must request the READ_EXTERNAL_STORAGE permission 
+When using HushSource.file() on Android 12 (API 32) or lower to access files outside
+of your app's private directory, you must request the READ_EXTERNAL_STORAGE permission
 at runtime. The plugin includes the necessary declaration in its manifest.
+
+## For Native Android (Kotlin) Developers
+
+The core of this plugin is a native Android technique. If you're a native developer, you can apply the same principle to secure your ExoPlayer audio playback.
+
+Instead of a standard media setup, configure your player for voice communication:
+
+```kotlin
+// Before: Standard media playback (recordable)
+val audioAttributes = AudioAttributes.Builder()
+    .setUsage(C.USAGE_MEDIA)
+    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+    .build()
+exoPlayer.setAudioAttributes(audioAttributes, true)
+
+
+// After: Secure voice playback (not recordable)
+val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+
+val secureAudioAttributes = AudioAttributes.Builder()
+    .setUsage(C.USAGE_VOICE_COMMUNICATION)
+    .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+    .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_NONE) // The key to preventing capture
+    .build()
+
+// Set handleAudioFocus to false as we manage it manually for voice call mode.
+exoPlayer.setAudioAttributes(secureAudioAttributes, false)
+
+// Then, intelligently route the audio to headphones or speaker.
+// (See the plugin's source code for a full implementation of device selection).
+```
 
 ## Important Notes
 
 ### Use Cases
 This plugin is designed for **sensitive, private audio content**:
-- ✅ Voice messages and voice notes
-- ✅ Confidential recordings
-- ✅ Private audio content
-- ✅ One-time audio messages
-- ❌ Music streaming (quality may be affected)
-- ❌ Background audio playback
+-   ✅ Voice messages and voice notes
+-   ✅ Confidential recordings
+-   ✅ Private audio content
+-   ✅ One-time audio messages
+-   ❌ Music streaming (quality will be affected)
+-   ❌ General-purpose background audio playback
 
 ### Audio Quality
-- Audio is processed through Android's voice communication pipeline
-- Quality is optimized for speech, not music
-- Perfect for voice content, acceptable for most audio
+-   Audio is processed through Android's voice communication pipeline, which may apply effects like automatic gain control or noise suppression.
+-   Quality is optimized for speech, not high-fidelity music.
+-   Perfect for voice content, acceptable for most other non-music audio.
 
 ### Platform Support
-- **Android**: Full support (API 21+)
-- **iOS**: Not needed - iOS already prevents audio capture during screen recording
+-   **Android**: Full support (API 21+)
+-   **iOS**: Not needed - iOS already prevents audio capture during screen recording by default.
 
 ## Quick Start
 
@@ -77,7 +108,7 @@ class _MyAudioWidgetState extends State<MyAudioWidget> {
 
    Future<void> _initializeSecureAudio() async {
       try {
-         // Check if device supports secure audio
+         // Check if the device supports the required Android version
          final isSupported = await Hush.isSupported();
          if (!isSupported) {
             print('Secure audio not supported on this device');
@@ -209,11 +240,15 @@ class _SecureVoicePlayerState extends State<SecureVoicePlayer> {
 
    void _setupListeners() {
       Hush.onStateChanged.listen((state) {
-         setState(() => _state = state);
+         if (mounted) {
+            setState(() => _state = state);
+         }
       });
 
       Hush.onPositionChanged.listen((position) {
-         setState(() => _position = position);
+         if (mounted) {
+            setState(() => _position = position);
+         }
       });
    }
 
@@ -230,9 +265,11 @@ class _SecureVoicePlayerState extends State<SecureVoicePlayer> {
    }
 
    void _showError(String message) {
-      ScaffoldMessenger.of(context).showSnackBar(
-         SnackBar(content: Text(message), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message), backgroundColor: Colors.red),
+         );
+      }
    }
 
    @override
@@ -262,17 +299,12 @@ class _SecureVoicePlayerState extends State<SecureVoicePlayer> {
                      ],
                   ),
                   SizedBox(height: 16),
-
-                  // Progress bar
                   LinearProgressIndicator(
                      value: _duration.inMilliseconds > 0
                              ? _position.inMilliseconds / _duration.inMilliseconds
                              : 0.0,
                   ),
-
                   SizedBox(height: 8),
-
-                  // Time display
                   Row(
                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                      children: [
@@ -280,10 +312,7 @@ class _SecureVoicePlayerState extends State<SecureVoicePlayer> {
                         Text(_formatDuration(_duration)),
                      ],
                   ),
-
                   SizedBox(height: 16),
-
-                  // Play/Pause button
                   ElevatedButton.icon(
                      onPressed: _togglePlayback,
                      icon: Icon(_state == HushState.playing
@@ -297,14 +326,12 @@ class _SecureVoicePlayerState extends State<SecureVoicePlayer> {
                         foregroundColor: Colors.white,
                      ),
                   ),
-
                   SizedBox(height: 8),
-
                   Text(
                      '🛡️ This audio cannot be screen recorded',
                      style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey[600],
+                        color: Colors.grey,
                         fontStyle: FontStyle.italic,
                      ),
                   ),
@@ -329,34 +356,35 @@ class _SecureVoicePlayerState extends State<SecureVoicePlayer> {
 
 | Method | Description | Returns |
 |--------|-------------|---------|
-| `isSupported()` | Check if device supports secure audio | `Future<bool>` |
-| `getAndroidVersion()` | Get the native Android SDK integer version | `Future<int>` |
-| `initialize()` | Initialize the secure audio system | `Future<void>` |
-| `load(HushSource)` | Load audio from source | `Future<void>` |
-| `play()` | Start secure playback | `Future<void>` |
-| `pause()` | Pause playback | `Future<void>` |
-| `stop()` | Stop and reset playback | `Future<void>` |
-| `seek(Duration)` | Seek to position | `Future<void>` |
-| `setVolume(double)` | Set volume (0.0-1.0) | `Future<void>` |
-| `getDuration()` | Get the total duration of the loaded audio | `Future<Duration>` |
-| `getPosition()` | Get the current playback position | `Future<Duration>` |
-| `getState()` | 	Get the current player state | `Future<HushState>` |
-| `isSecureModeActive()` | Check if the secure audio mode is currently active | `Future<bool>` |
-| `dispose()` | Clean up resources | `Future<void>` |
+| `isSupported()` | Check if the device's Android version is sufficient (API 21+). | `Future<bool>` |
+| `getAndroidVersion()` | Get the native Android SDK integer version. | `Future<int>` |
+| `initialize()` | Prepare the secure audio system. Must be called before loading. | `Future<void>` |
+| `load(HushSource)` | Load audio from a specified source. | `Future<void>` |
+| `play()` | Start or resume secure playback. | `Future<void>` |
+| `pause()` | Pause the current playback. | `Future<void>` |
+| `stop()` | Stop playback and reset the position to the beginning. | `Future<void>` |
+| `seek(Duration)` | Seek to a specific position in the audio. | `Future<void>` |
+| `setVolume(double)` | Set the player volume (from 0.0 to 1.0). | `Future<void>` |
+| `getDuration()` | Get the total duration of the loaded audio. | `Future<Duration>` |
+| `getPosition()` | Get the current playback position. | `Future<Duration>` |
+| `getState()` | Get the current player state (`HushState`). | `Future<HushState>` |
+| `isSecureModeActive()` | Check if the secure audio mode is currently active. | `Future<bool>` |
+| `getCurrentDevice()` | Get information about the current audio output device. | `Future<Map<String, dynamic>?>` |
+| `dispose()` | Clean up all native resources. Call this when done. | `Future<void>` |
 
 ### Audio Sources
 
 ```dart
-// From file path
+// From a file path
 HushSource.file('/path/to/audio.mp3')
 
-// From app assets  
+// From app assets declared in pubspec.yaml
 HushSource.asset('assets/audio/voice.mp3')
 
-// From URL
+// From a network URL
 HushSource.url('https://example.com/audio.mp3')
 
-// From byte array
+// From a raw byte array
 HushSource.bytes(Uint8List audioData)
 ```
 
@@ -368,309 +396,37 @@ Hush.onStateChanged.listen((HushState state) {
 // Handle state: idle, loading, playing, paused, completed, error
 });
 
-// Listen to position updates (every second)
+// Listen to position updates (streams roughly every second during playback)
 Hush.onPositionChanged.listen((Duration position) {
-// Update UI with current position
+// Update UI with the current position
 });
 ```
 
-## Error Handling
-
-```dart
-try {
-await Hush.play();
-} on HushException catch (e) {
-switch (e.code) {
-case 'PLATFORM_NOT_SUPPORTED':
-_showError('This feature requires Android');
-break;
-case 'PLAYER_ERROR':
-_showError('Audio player error: ${e.message}');
-break;
-default:
-_showError('Error: ${e.message}');
-}
-} catch (e) {
-_showError('Unexpected error: $e');
-}
-```
-
-## Testing the Protection
-
-1. Load and play audio using this plugin
-2. Start screen recording on your Android device
-3. Notice that the audio is completely silent in the recording
-4. The protection works even with:
-   - Built-in screen recorders
-   - Third-party recording apps
-   - Root-level recording tools
-   - System-level capture utilities that respect Android's audio policies
-
-## How It Works
+## Security & How It Works
 
 This plugin exploits Android's audio security model by:
 
-1. **Voice Communication Mode**: Sets `AudioManager.MODE_IN_COMMUNICATION`
-2. **Secure Audio Attributes**: Uses `USAGE_VOICE_COMMUNICATION` with `ALLOW_CAPTURE_BY_NONE`
-3. **Audio Focus Management**: Requests `AUDIOFOCUS_GAIN` for voice calls
-4. **System Protection**: Leverages Android's built-in call privacy protections
-
-Android treats voice calls as private and prevents any recording - this plugin tricks the system into thinking your audio is a phone call!
-
-## Device Compatibility
-
-### Fully Supported
-- Android 5.0+ (API 21+)
-- All major OEMs (Samsung, Google, OnePlus, Xiaomi, etc.)
-- Custom ROMs based on AOSP
-
-###  Limitations
-- iOS: Not needed (built-in protection)
-- Android < 5.0: Not supported
-- Some heavily modified ROMs may behave differently
-
-## Acknowledgments
-
-- Thanks to the Android audio team for the voice communication security model
-- Inspired by the need for real privacy in messaging apps
-- Built with love for privacy-first developers
+1.  **Setting Voice Communication Mode**: It tells the system to behave as if it's in a phone call by setting `AudioManager.MODE_IN_COMMUNICATION`.
+2.  **Using Secure Audio Attributes**: It configures the audio player with `USAGE_VOICE_COMMUNICATION` and, most importantly, `setAllowedCapturePolicy(ALLOW_CAPTURE_BY_NONE)`. This explicitly forbids other apps from capturing the audio.
+3.  **Intelligent Routing**: It detects if headphones (wired or Bluetooth) are connected and directs audio to them. If not, it uses the main speaker, bypassing the earpiece for a better user experience.
+4.  **Leveraging System Protection**: Android inherently protects the voice call stream to ensure user privacy, and this plugin makes your audio a part of that protected system.
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### "Secure audio not supported"
-- **Cause**: Device running Android < 5.0 or missing audio hardware
-- **Solution**: Check `await Hush.isSupported()` before initialization
+#### Audio quality sounds different or like a phone call.
+-   **Cause**: This is expected. The voice communication mode often applies audio processing like automatic gain control (AGC) or noise suppression.
+-   **Solution**: This is a trade-off for security. The plugin prioritizes protection over high-fidelity music quality.
 
-#### "Failed to initialize secure audio"
-- **Cause**: The AudioManager system service might be unavailable on some unusual or non-standard Android builds.
-- **Solution**: The plugin requires the MODIFY_AUDIO_SETTINGS permission, which is included automatically.
+#### "Player not initialized" or other errors.
+-   **Cause**: Trying to play audio before calling `initialize()` and `load()`.
+-   **Solution**: Ensure you always call `initialize()` → `load()` → `play()` in sequence.
 
-#### "Player not initialized"
-- **Cause**: Trying to play audio before calling `initialize()` and `load()`
-- **Solution**: Always call `initialize()` → `load()` → `play()` in sequence
-
-#### Audio quality sounds different
-- **Cause**: Voice communication mode applies audio processing (AGC, noise suppression)
-- **Solution**: This is expected behavior - the plugin prioritizes security over music quality
-
-#### Conflicts with phone calls
-- **Cause**: Incoming call during secure playback
-- **Solution**: Plugin automatically handles this - playback pauses during calls
-
-### Debug Information
-
-```dart
-// Get detailed device info
-Future<void> _debugInfo() async {
-   final supported = await Hush.isSupported();
-   final androidVersion = await Hush.getAndroidVersion();
-   final isActive = await Hush.isSecureModeActive();
-
-   print('Supported: $supported');
-   print('Android Version: $androidVersion');
-   print('Secure Mode Active: $isActive');
-}
-```
-
-### Performance Tips
-
-1. **Initialize Once**: Call `initialize()` once per app session
-2. **Dispose Properly**: Always call `dispose()` to free resources
-3. **Avoid Background Play**: Don't use for background audio - it's not designed for that
-4. **Batch Operations**: Load audio before showing UI to avoid loading states
-
-## Advanced Usage
-
-### Custom Error Handling
-
-```dart
-class SecureAudioManager {
-   static Future<bool> playWithFallback(HushSource source) async {
-      try {
-         if (!await Hush.isSupported()) {
-            // Fallback to regular audio player
-            return _playWithRegularPlayer(source);
-         }
-
-         await Hush.initialize();
-         await Hush.load(source);
-         await Hush.play();
-         return true;
-
-      } on HushException catch (e) {
-         print('Secure audio failed: ${e.code} - ${e.message}');
-         return _playWithRegularPlayer(source);
-      }
-   }
-
-   static bool _playWithRegularPlayer(HushSource source) {
-      // Your fallback audio player implementation
-      return false;
-   }
-}
-```
-
-### Batch Audio Loading
-
-```dart
-class VoiceMessageQueue {
-   final List<String> _messageQueue = [];
-   int _currentIndex = 0;
-
-   Future<void> loadQueue(List<String> messagePaths) async {
-      _messageQueue.clear();
-      _messageQueue.addAll(messagePaths);
-      _currentIndex = 0;
-
-      if (_messageQueue.isNotEmpty) {
-         await _loadCurrent();
-      }
-   }
-
-   Future<void> playNext() async {
-      if (_currentIndex < _messageQueue.length) {
-         await Hush.play();
-      }
-   }
-
-   Future<void> _loadCurrent() async {
-      if (_currentIndex < _messageQueue.length) {
-         final source = HushSource.file(_messageQueue[_currentIndex]);
-         await Hush.load(source);
-      }
-   }
-
-   Future<void> _onAudioComplete() async {
-      _currentIndex++;
-      if (_currentIndex < _messageQueue.length) {
-         await _loadCurrent();
-         // Auto-play next or wait for user input
-      }
-   }
-}
-```
-
-### Integration with State Management
-
-```dart
-// Using Provider/Riverpod
-class SecureAudioNotifier extends ChangeNotifier {
-   HushState _state = HushState.idle;
-   Duration _position = Duration.zero;
-   Duration _duration = Duration.zero;
-   String? _error;
-
-   HushState get state => _state;
-   Duration get position => _position;
-   Duration get duration => _duration;
-   String? get error => _error;
-
-   Future<void> initialize() async {
-      try {
-         await Hush.initialize();
-         _setupListeners();
-      } catch (e) {
-         _error = e.toString();
-         notifyListeners();
-      }
-   }
-
-   void _setupListeners() {
-      Hush.onStateChanged.listen((state) {
-         _state = state;
-         notifyListeners();
-      });
-
-      Hush.onPositionChanged.listen((position) {
-         _position = position;
-         notifyListeners();
-      });
-   }
-
-   Future<void> loadAndPlay(String filePath) async {
-      try {
-         _error = null;
-         final source = HushSource.file(filePath);
-         await Hush.load(source);
-         _duration = await Hush.getDuration();
-         await Hush.play();
-         notifyListeners();
-      } catch (e) {
-         _error = e.toString();
-         notifyListeners();
-      }
-   }
-}
-```
-
-## Security Considerations
-
-### What This Plugin Protects Against
-- ✅ Screen recording apps (all known variants)
-- ✅ Built-in device screen recorders
-- ✅ Third-party recording software
-- ✅ System-level recording utilities that respect Android's audio policies
-
-### What This Plugin Cannot Protect Against
-- ❌ Physical microphone recording
-- ❌ Hardware-level audio interception
-- ❌ Custom ROMs or root-level modifications that intentionally bypass Android's audio policies
-
-### Best Practices
-1. **Use for sensitive content only** - Don't overuse for regular audio
-2. **Inform users** - Let users know their audio is protected
-3. **Test thoroughly** - Always test on your target devices
-4. **Have fallbacks** - Handle cases where secure mode isn't available
-5. **Clean up properly** - Always dispose resources to avoid conflicts
-
-## Real-World Use Cases
-
-### 1. Secure Messaging Apps
-```dart
-// Perfect for "disappearing" voice messages
-class DisappearingVoiceMessage extends StatelessWidget {
-   final String audioPath;
-   final VoidCallback onComplete;
-
-// Play once and auto-delete
-}
-```
-
-### 2. Confidential Business Audio
-```dart
-// For sensitive business communications
-class ConfidentialAudioPlayer extends StatelessWidget {
-   final String meetingRecording;
-   final List<String> authorizedUsers;
-
-// Only play for authorized users
-}
-```
-
-### 3. Medical/Legal Audio
-```dart
-// For HIPAA/privacy compliant audio
-class ComplianceAudioPlayer extends StatelessWidget {
-   final String patientAudio;
-   final bool requiresAuthentication;
-
-// Secure patient audio playback
-}
-```
-
-### 4. Educational Content Protection
-```dart
-// For protecting premium educational audio
-class ProtectedLessonAudio extends StatelessWidget {
-   final String lessonAudio;
-   final bool isPremiumContent;
-
-// Prevent piracy of audio lessons
-}
-```
+#### Conflicts with phone calls.
+-   **Cause**: An incoming phone call will interrupt any audio playback.
+-   **Solution**: The plugin correctly handles audio focus, automatically pausing playback during a call and allowing it to be resumed after.
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License - see the LICENSE file for details.

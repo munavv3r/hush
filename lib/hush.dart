@@ -269,4 +269,9 @@ class Hush {
         return HushState.idle;
     }
   }
+
+  static Future<Map<String, dynamic>?> getCurrentDevice() async {
+    final result = await _channel.invokeMethod<Map<Object?, Object?>>('getCurrentDevice');
+    return result?.cast<String, dynamic>();
+  }
 }

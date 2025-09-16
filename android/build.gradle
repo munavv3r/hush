@@ -27,8 +27,8 @@ apply plugin: 'kotlin-android'
 android {
     namespace "com.hush.hush"
     compileSdkVersion 34
+    ndkVersion "25.2.9519653"
 
-    // FIX: Update Java version to remove build warnings
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
